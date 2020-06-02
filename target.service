@@ -1,0 +1,14 @@
+[Unit]
+Description=SSH Honeypot
+
+[Service]
+User=tryhackme
+Group=tryhackme
+WorkingDirectory=/home/tryhackme/
+ExecStart=/home/tryhackme/main -p 22 --rhost "http://192.168.170.144/"
+Restart=always
+RestartSec=5
+StandardOutput=file:/home/tryhackme/log_out.txt
+StandardError=file:/home/tryhackme/log_err.txt
+[Install]
+WantedBy=multi-user.target

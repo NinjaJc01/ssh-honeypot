@@ -1,0 +1,14 @@
+[Unit]
+Description=SSH Honeypot
+
+[Service]
+User=james
+Group=james
+WorkingDirectory=/home/james/
+ExecStart=/home/james/main -p 80 -l
+Restart=always
+RestartSec=5
+StandardOutput=file:/home/james/log_out.txt
+StandardError=file:/home/james/log_err.txt
+[Install]
+WantedBy=multi-user.target
