@@ -1,16 +1,22 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
+	"net"
 	"os"
 	"strings"
 
 	"github.com/gliderlabs/ssh"
+	"github.com/integrii/flaggy"
 	gossh "golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/terminal"
+)
+
+var (
+	hostname string = "kali"
+	message  string = "Don't blindly SSH into every VM you see."
 )
 
 type loginData struct {
@@ -22,18 +28,25 @@ type loginData struct {
 
 func main() {
 	var (
-		lport       uint
-		lhost       string
-		keyPath     string
-		fingerprint string
-		fakeShell   bool
+		lport       uint   = 2222
+		lhost       net.IP = net.ParseIP("0.0.0.0")
+		keyPath     string = "id_rsa"
+		fingerprint string = "OpenSSH_8.2p1 Debian-4"
 	)
-	flag.UintVar(&lport, "p", 2222, "Set the local port to listen for SSH on")
-	flag.StringVar(&lhost, "i", "0.0.0.0", "The IP address to listen on")
-	flag.StringVar(&keyPath, "k", "id_rsa", "Set a path to the private key to use for the SSH server")
-	flag.BoolVar(&fakeShell, "shell", false, "Set true to lock the user in a fake shell")
-	flag.StringVar(&fingerprint, "f", "OpenSSH_8.2p1 Debian-4", "Set the fingerprint of the SSH server, exclude the 'SSH-2.0-' prefix")
-	flag.Parse()
+
+	flaggy.UInt(&lport, "p", "port", "Local port to listen for SSH on")
+	flaggy.IP(&lhost, "i", "interface", "IP address for the interface to listen on")
+	flaggy.String(&keyPath, "k", "key", "Path to private key for SSH server")
+	flaggy.String(&fingerprint, "f", "fingerprint", "")
+
+	fakeShellSubcommand := flaggy.NewSubcommand("fakeshell")
+	fakeShellSubcommand.String(&hostname, "H", "hostname", "Hostname for fake shell prompt")
+	warnSubcommand := flaggy.NewSubcommand("warn")
+	warnSubcommand.String(&message, "m", "message", "Warning message to be sent after authentication")
+	
+	flaggy.AttachSubcommand(fakeShellSubcommand,1)
+	flaggy.AttachSubcommand(warnSubcommand,1)
+	flaggy.Parse()
 	log.SetPrefix("SSH - ")
 	privKeyBytes, err := ioutil.ReadFile(keyPath)
 	if err != nil {
@@ -44,9 +57,9 @@ func main() {
 		log.Panicln("Error parsing privkey:\t", err.Error())
 	}
 	server := &ssh.Server{
-		Addr: fmt.Sprintf("%s:%v", lhost, lport),
+		Addr: fmt.Sprintf("%s:%v", lhost.String(), lport),
 		Handler: func() ssh.Handler {
-			if !fakeShell {
+			if warnSubcommand.Used {
 				return sshHandler
 			}
 			return fakeTerminal
@@ -72,7 +85,7 @@ func logData(data loginData) {
 }
 
 func sshHandler(s ssh.Session) {
-	s.Write([]byte("Don't blindly SSH into every VM you see.\n"))
+	s.Write([]byte(message + "\n"))
 }
 
 func fakeTerminal(s ssh.Session) {
