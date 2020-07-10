@@ -21,23 +21,27 @@ type loginData struct {
 }
 
 func main() {
-	var lport uint
-	var lhost string
-	var keyPath string
-	var fakeShell bool
+	var (
+		lport       uint
+		lhost       string
+		keyPath     string
+		fingerprint string
+		fakeShell   bool
+	)
 	flag.UintVar(&lport, "p", 2222, "Set the local port to listen for SSH on")
 	flag.StringVar(&lhost, "i", "0.0.0.0", "The IP address to listen on")
 	flag.StringVar(&keyPath, "k", "id_rsa", "Set a path to the private key to use for the SSH server")
 	flag.BoolVar(&fakeShell, "shell", false, "Set true to lock the user in a fake shell")
+	flag.StringVar(&fingerprint, "f", "OpenSSH_8.2p1 Debian-4", "Set the fingerprint of the SSH server, exclude the 'SSH-2.0-' prefix")
 	flag.Parse()
 	log.SetPrefix("SSH - ")
 	privKeyBytes, err := ioutil.ReadFile(keyPath)
 	if err != nil {
-		log.Panicln("Error reading privbkey:\t", err.Error())
+		log.Panicln("Error reading privkey:\t", err.Error())
 	}
 	privateKey, err := gossh.ParsePrivateKey(privKeyBytes)
 	if err != nil {
-		log.Panicln("Error parsing pubkey:\t", err.Error())
+		log.Panicln("Error parsing privkey:\t", err.Error())
 	}
 	server := &ssh.Server{
 		Addr: fmt.Sprintf("%s:%v", lhost, lport),
@@ -47,11 +51,11 @@ func main() {
 			}
 			return fakeTerminal
 		}(),
-		Version:         "OpenSSH_8.2p1 Debian-4",
+		Version:         fingerprint,
 		PasswordHandler: passwordHandler,
 	}
 	server.AddHostKey(privateKey)
-	log.Println("Started malicious SSH server")
+	log.Println("Started Honeypot SSH server on", server.Addr)
 	log.Fatal(server.ListenAndServe())
 }
 
@@ -67,9 +71,10 @@ func logData(data loginData) {
 	}
 }
 
-func sshHandler(s ssh.Session) { //TODO improve this
+func sshHandler(s ssh.Session) {
 	s.Write([]byte("Don't blindly SSH into every VM you see.\n"))
 }
+
 func fakeTerminal(s ssh.Session) {
 	term := terminal.NewTerminal(s, fmt.Sprintf("%s@kali:~$ ", s.User()))
 	for {
@@ -83,6 +88,7 @@ func fakeTerminal(s ssh.Session) {
 		}
 	}
 }
+
 func passwordHandler(context ssh.Context, password string) bool {
 	details := fmt.Sprintf(
 		"Got Login!\nUsername:\t%s\nPassword:\t%s\nRemote:\t%s\nClient:\t%s\n",
@@ -93,7 +99,6 @@ func passwordHandler(context ssh.Context, password string) bool {
 		password:      password,
 		remoteIP:      context.RemoteAddr().String(),
 		remoteVersion: context.ClientVersion()}
-	//log.Println(data)
 	logData(data)
 	return true
 }
