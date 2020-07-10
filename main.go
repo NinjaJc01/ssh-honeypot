@@ -15,15 +15,26 @@ import (
 )
 
 var (
-	hostname string = "kali"
-	message  string = "Don't blindly SSH into every VM you see."
+	doCommandLogging bool   = false
+	hostname         string = "kali"
+	message          string = "Don't blindly SSH into every VM you see."
+	lootChan         chan (loginData)
+	cmdChan          chan (command)
 )
+
+const buffSize = 5
 
 type loginData struct {
 	username      string
 	password      string
 	remoteIP      string
 	remoteVersion string
+}
+
+type command struct {
+	username string
+	remoteIP string
+	command  string
 }
 
 func main() {
@@ -33,20 +44,25 @@ func main() {
 		keyPath     string = "id_rsa"
 		fingerprint string = "OpenSSH_8.2p1 Debian-4"
 	)
-
+	lootChan = make(chan (loginData), buffSize)
+	cmdChan = make(chan (command), buffSize)
 	flaggy.UInt(&lport, "p", "port", "Local port to listen for SSH on")
 	flaggy.IP(&lhost, "i", "interface", "IP address for the interface to listen on")
 	flaggy.String(&keyPath, "k", "key", "Path to private key for SSH server")
-	flaggy.String(&fingerprint, "f", "fingerprint", "")
+	flaggy.String(&fingerprint, "f", "fingerprint", "SSH Fingerprint, excluding the SSH-2.0- prefix")
 
 	fakeShellSubcommand := flaggy.NewSubcommand("fakeshell")
 	fakeShellSubcommand.String(&hostname, "H", "hostname", "Hostname for fake shell prompt")
+	fakeShellSubcommand.Bool(&doCommandLogging, "C", "logcmd", "Log user commands within the fake shell?")
 	warnSubcommand := flaggy.NewSubcommand("warn")
 	warnSubcommand.String(&message, "m", "message", "Warning message to be sent after authentication")
-	
-	flaggy.AttachSubcommand(fakeShellSubcommand,1)
-	flaggy.AttachSubcommand(warnSubcommand,1)
+
+	flaggy.AttachSubcommand(fakeShellSubcommand, 1)
+	flaggy.AttachSubcommand(warnSubcommand, 1)
 	flaggy.Parse()
+	if !fakeShellSubcommand.Used && !warnSubcommand.Used {
+		flaggy.ShowHelpAndExit("No subcommand supplied")
+	}
 	log.SetPrefix("SSH - ")
 	privKeyBytes, err := ioutil.ReadFile(keyPath)
 	if err != nil {
@@ -68,11 +84,40 @@ func main() {
 		PasswordHandler: passwordHandler,
 	}
 	server.AddHostKey(privateKey)
+	go threadsafeLootLogger()
+	log.Println("Started loot logger")
+	if doCommandLogging {
+		go threadsafeCommandLogger()
+		log.Println("Started command logger")
+	}
 	log.Println("Started Honeypot SSH server on", server.Addr)
 	log.Fatal(server.ListenAndServe())
 }
 
-func logData(data loginData) {
+func threadsafeLootLogger() {
+	for {
+		logLoot(<-lootChan)
+	}
+}
+
+func threadsafeCommandLogger() {
+	for {
+		logCommand(<-cmdChan)
+	}
+}
+
+func logCommand(cmd command) {
+	file, err := os.OpenFile("cmd.csv", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Println(err.Error())
+	}
+	defer file.Close()
+	cmdString := fmt.Sprintf("%s,%s,%s\n", cmd.username, cmd.remoteIP, cmd.command)
+	if _, err := file.WriteString(cmdString); err != nil {
+		log.Println(err.Error())
+	}
+}
+func logLoot(data loginData) {
 	file, err := os.OpenFile("loot.csv", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Println(err.Error())
@@ -97,6 +142,12 @@ func fakeTerminal(s ssh.Session) {
 			break
 		}
 		if commandLineSlice[0] != "" {
+			if doCommandLogging {
+				cmdChan <- command{
+					username: s.User(),
+					remoteIP: s.RemoteAddr().String(),
+					command:  commandLine}
+			}
 			term.Write([]byte(fmt.Sprintf("bash: %s: command not found\n", commandLineSlice[0])))
 		}
 	}
@@ -112,6 +163,7 @@ func passwordHandler(context ssh.Context, password string) bool {
 		password:      password,
 		remoteIP:      context.RemoteAddr().String(),
 		remoteVersion: context.ClientVersion()}
-	logData(data)
+	//logLoot(data)
+	lootChan <- data
 	return true
 }
