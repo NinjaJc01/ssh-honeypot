@@ -147,6 +147,14 @@ func sshHandler(s ssh.Session) {
 }
 
 func fakeTerminal(s ssh.Session) {
+	commandLine := s.RawCommand()
+	if s.RawCommand() != "" {
+		cmdChan <- command{
+			username:  s.User(),
+			remoteIP:  s.RemoteAddr().String(),
+			command:   commandLine,
+			timestamp: fmt.Sprint(time.Now().Unix())}
+	}
 	term := terminal.NewTerminal(s, fmt.Sprintf("%s@%s:~$ ", s.User(), hostname))
 	for {
 		commandLine, _ := term.ReadLine()
