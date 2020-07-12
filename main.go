@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/gliderlabs/ssh"
 	"github.com/integrii/flaggy"
@@ -29,12 +30,14 @@ type loginData struct {
 	password      string
 	remoteIP      string
 	remoteVersion string
+	timestamp     string
 }
 
 type command struct {
-	username string
-	remoteIP string
-	command  string
+	username  string
+	remoteIP  string
+	command   string
+	timestamp string
 }
 
 func main() {
@@ -112,18 +115,28 @@ func logCommand(cmd command) {
 		log.Println(err.Error())
 	}
 	defer file.Close()
-	cmdString := fmt.Sprintf("%s,%s,%s\n", cmd.username, cmd.remoteIP, cmd.command)
+	cmdString := fmt.Sprintf("%s,%s,%s,%s\n", cmd.username, cmd.remoteIP, cmd.command, cmd.timestamp)
 	if _, err := file.WriteString(cmdString); err != nil {
 		log.Println(err.Error())
 	}
 }
+
 func logLoot(data loginData) {
+	details := fmt.Sprintf(
+		"Got Login!\nUsername:\t%s\nPassword:\t%s\nRemote:\t%s\nClient:\t%s\n",
+		data.username, data.password, data.remoteIP, data.remoteVersion)
+	log.Println(details)
 	file, err := os.OpenFile("loot.csv", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Println(err.Error())
 	}
 	defer file.Close()
-	loginString := fmt.Sprintf("%s,%s,%s,%s\n", data.username, data.password, data.remoteIP, data.remoteVersion)
+	loginString := fmt.Sprintf("%s,%s,%s,%s,%s\n",
+		data.username,
+		data.password,
+		data.remoteIP,
+		data.remoteVersion,
+		data.timestamp)
 	if _, err := file.WriteString(loginString); err != nil {
 		log.Println(err.Error())
 	}
@@ -134,7 +147,7 @@ func sshHandler(s ssh.Session) {
 }
 
 func fakeTerminal(s ssh.Session) {
-	term := terminal.NewTerminal(s, fmt.Sprintf("%s@kali:~$ ", s.User()))
+	term := terminal.NewTerminal(s, fmt.Sprintf("%s@%s:~$ ", s.User(), hostname))
 	for {
 		commandLine, _ := term.ReadLine()
 		commandLineSlice := strings.Split(commandLine, " ")
@@ -144,9 +157,10 @@ func fakeTerminal(s ssh.Session) {
 		if commandLineSlice[0] != "" {
 			if doCommandLogging {
 				cmdChan <- command{
-					username: s.User(),
-					remoteIP: s.RemoteAddr().String(),
-					command:  commandLine}
+					username:  s.User(),
+					remoteIP:  s.RemoteAddr().String(),
+					command:   commandLine,
+					timestamp: fmt.Sprint(time.Now().Unix())}
 			}
 			term.Write([]byte(fmt.Sprintf("bash: %s: command not found\n", commandLineSlice[0])))
 		}
@@ -154,15 +168,12 @@ func fakeTerminal(s ssh.Session) {
 }
 
 func passwordHandler(context ssh.Context, password string) bool {
-	details := fmt.Sprintf(
-		"Got Login!\nUsername:\t%s\nPassword:\t%s\nRemote:\t%s\nClient:\t%s\n",
-		context.User(), password, context.RemoteAddr(), context.ClientVersion())
-	log.Println(details)
 	data := loginData{
 		username:      context.User(),
 		password:      password,
 		remoteIP:      context.RemoteAddr().String(),
-		remoteVersion: context.ClientVersion()}
+		remoteVersion: context.ClientVersion(),
+		timestamp:     fmt.Sprint(time.Now().Unix())}
 	//logLoot(data)
 	lootChan <- data
 	return true
