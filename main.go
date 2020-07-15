@@ -161,7 +161,11 @@ func fakeTerminal(s ssh.Session) {
 		s.Close()
 	}(s)
 	for {
-		commandLine, _ := term.ReadLine()
+		commandLine, err := term.ReadLine()
+		if err != nil {
+			s.Close()
+			break
+		}
 		commandLineSlice := strings.Split(commandLine, " ")
 		if commandLineSlice[0] == "exit" {
 			break
@@ -177,6 +181,7 @@ func fakeTerminal(s ssh.Session) {
 			term.Write([]byte(fmt.Sprintf("bash: %s: command not found\n", commandLineSlice[0])))
 		}
 	}
+	s.Close()
 }
 
 func passwordHandler(context ssh.Context, password string) bool {
