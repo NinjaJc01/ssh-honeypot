@@ -148,7 +148,7 @@ func sshHandler(s ssh.Session) {
 
 func fakeTerminal(s ssh.Session) {
 	commandLine := s.RawCommand()
-	if s.RawCommand() != "" {
+	if s.RawCommand() != "" { //If the attacker sets a command with ssh -C
 		cmdChan <- command{
 			username:  s.User(),
 			remoteIP:  s.RemoteAddr().String(),
@@ -156,6 +156,10 @@ func fakeTerminal(s ssh.Session) {
 			timestamp: fmt.Sprint(time.Now().Unix())}
 	}
 	term := terminal.NewTerminal(s, fmt.Sprintf("%s@%s:~$ ", s.User(), hostname))
+	go func(s ssh.Session) { //timeout sessions to save CPU.
+		time.Sleep(time.Second*30)
+		s.Close()
+	}(s)
 	for {
 		commandLine, _ := term.ReadLine()
 		commandLineSlice := strings.Split(commandLine, " ")
