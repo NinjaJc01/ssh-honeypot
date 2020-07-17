@@ -115,15 +115,20 @@ func logCommand(cmd command) {
 		log.Println(err.Error())
 	}
 	defer file.Close()
-	cmd.command = strings.ReplaceAll(cmd.command,"\n",`\n`)
-	cmd.command = strings.ReplaceAll(cmd.command,`"`,`""`)
-	cmdString := fmt.Sprintf("%s,%s,\"%s\",%s\n", cmd.username, cmd.remoteIP, cmd.command, cmd.timestamp)
+	cmd.command = csvFilterQuotes(cmd.command)
+	cmdString := fmt.Sprintf("\"%s\",\"%s\",\"%s\",%s\n", cmd.username, cmd.remoteIP, cmd.command, cmd.timestamp)
 	if _, err := file.WriteString(cmdString); err != nil {
 		log.Println(err.Error())
 	}
 }
 
-func logLoot(data loginData) {
+func csvFilterQuotes(inp string) string {
+	inp = strings.ReplaceAll(inp,"\n",`\n`)
+	inp = strings.ReplaceAll(inp,`"`,`""`)
+	return inp
+}
+
+func logLoot(data loginData) { //TODO quoted string username
 	details := fmt.Sprintf(
 		"Got Login!\nUsername:\t%s\nPassword:\t%s\nRemote:\t%s\nClient:\t%s\n",
 		data.username, data.password, data.remoteIP, data.remoteVersion)
@@ -133,7 +138,10 @@ func logLoot(data loginData) {
 		log.Println(err.Error())
 	}
 	defer file.Close()
-	loginString := fmt.Sprintf("%s,%s,%s,%s,%s\n",
+	data.username = csvFilterQuotes(data.username)
+	data.password = csvFilterQuotes(data.password)
+	data.remoteVersion = csvFilterQuotes(data.remoteVersion)
+	loginString := fmt.Sprintf("\"%s\",\"%s\",\"%s\",\"%s\",\"%s\"\n",
 		data.username,
 		data.password,
 		data.remoteIP,
