@@ -115,8 +115,9 @@ func logCommand(cmd command) {
 		log.Println(err.Error())
 	}
 	defer file.Close()
-	cmd.command = strings.ReplaceAll(cmd.command,"\"","\"\"")
-	cmdString := fmt.Sprintf("%s,%s,\"%#v\",%s\n", cmd.username, cmd.remoteIP, cmd.command, cmd.timestamp)
+	cmd.command = strings.ReplaceAll(cmd.command,"\n",`\n`)
+	cmd.command = strings.ReplaceAll(cmd.command,`"`,`""`)
+	cmdString := fmt.Sprintf("%s,%s,\"%s\",%s\n", cmd.username, cmd.remoteIP, cmd.command, cmd.timestamp)
 	if _, err := file.WriteString(cmdString); err != nil {
 		log.Println(err.Error())
 	}
