@@ -1,21 +1,23 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"net"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/gliderlabs/ssh"
 	"github.com/integrii/flaggy"
+	_ "github.com/mattn/go-sqlite3"
 	gossh "golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/terminal"
 )
 
 var (
+	database         *sql.DB
 	doCommandLogging bool   = false
 	hostname         string = "kali"
 	message          string = "Don't blindly SSH into every VM you see."
@@ -47,6 +49,12 @@ func main() {
 		keyPath     string = "id_rsa"
 		fingerprint string = "OpenSSH_8.2p1 Debian-4"
 	)
+	databasePointer, err := sql.Open("sqlite3", "honeypot.db")
+	if err != nil {
+		log.Println(err.Error())
+		log.Fatal("Database connection failed")
+	}
+	database = databasePointer
 	lootChan = make(chan (loginData), buffSize)
 	cmdChan = make(chan (command), buffSize)
 	flaggy.UInt(&lport, "p", "port", "Local port to listen for SSH on")
@@ -97,6 +105,8 @@ func main() {
 	log.Fatal(server.ListenAndServe())
 }
 
+// These functions ensure only one thread is writing to the DB at once.
+// Each handler runs in parallel so we cannot write from that thread safely.
 func threadsafeLootLogger() {
 	for {
 		logLoot(<-lootChan)
@@ -110,44 +120,34 @@ func threadsafeCommandLogger() {
 }
 
 func logCommand(cmd command) {
-	file, err := os.OpenFile("cmd.csv", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	statement, err := database.Prepare(
+		"INSERT INTO Command(Username, RemoteIP, Command, Timestamp) values(?,?,?,?)")
 	if err != nil {
 		log.Println(err.Error())
 	}
-	defer file.Close()
-	cmd.command = csvFilterQuotes(cmd.command)
-	cmdString := fmt.Sprintf("\"%s\",\"%s\",\"%s\",%s\n", cmd.username, cmd.remoteIP, cmd.command, cmd.timestamp)
-	if _, err := file.WriteString(cmdString); err != nil {
+	_, err = statement.Exec(
+		cmd.username,
+		cmd.remoteIP,
+		cmd.command,
+		cmd.timestamp)
+	if err != nil {
 		log.Println(err.Error())
 	}
-}
-
-func csvFilterQuotes(inp string) string {
-	inp = strings.ReplaceAll(inp,"\n",`\n`)
-	inp = strings.ReplaceAll(inp,`"`,`""`)
-	return inp
 }
 
 func logLoot(data loginData) { //TODO quoted string username
-	details := fmt.Sprintf(
-		"Got Login!\nUsername:\t%s\nPassword:\t%s\nRemote:\t%s\nClient:\t%s\n",
-		data.username, data.password, data.remoteIP, data.remoteVersion)
-	log.Println(details)
-	file, err := os.OpenFile("loot.csv", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	statement, err := database.Prepare(
+		"INSERT INTO Login(Username, Password, RemoteIP, RemoteVersion, Timestamp) values(?,?,?,?,?)")
 	if err != nil {
 		log.Println(err.Error())
 	}
-	defer file.Close()
-	data.username = csvFilterQuotes(data.username)
-	data.password = csvFilterQuotes(data.password)
-	data.remoteVersion = csvFilterQuotes(data.remoteVersion)
-	loginString := fmt.Sprintf("\"%s\",\"%s\",\"%s\",\"%s\",\"%s\"\n",
+	_, err = statement.Exec(
 		data.username,
 		data.password,
 		data.remoteIP,
 		data.remoteVersion,
 		data.timestamp)
-	if _, err := file.WriteString(loginString); err != nil {
+	if err != nil {
 		log.Println(err.Error())
 	}
 }
@@ -167,7 +167,7 @@ func fakeTerminal(s ssh.Session) {
 	}
 	term := terminal.NewTerminal(s, fmt.Sprintf("%s@%s:~$ ", s.User(), hostname))
 	go func(s ssh.Session) { //timeout sessions to save CPU.
-		time.Sleep(time.Second*30)
+		time.Sleep(time.Second * 30)
 		s.Close()
 	}(s)
 	for {
