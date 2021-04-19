@@ -1,0 +1,14 @@
+[Unit]
+Description=SSH Honeypot
+
+[Service]
+User=james
+Group=james
+WorkingDirectory=/home/james/honeypot/
+ExecStart=/home/james/honeypot/server fakeshell -p 22 -f "OpenSSH_8.2p1 Ubuntu-4ubuntu0.1" -H ubuntu-prod -C
+Restart=always
+RestartSec=5
+StandardOutput=file:/home/james/honeypot/log_out.txt
+StandardError=file:/home/james/honeypot/log_err.txt
+[Install]
+WantedBy=multi-user.target
